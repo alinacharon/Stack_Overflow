@@ -1,4 +1,4 @@
 .DS_Store
 .vscode/
 SOF_project/
-data/
+data/*.csv
