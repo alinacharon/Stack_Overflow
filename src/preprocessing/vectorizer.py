@@ -1,6 +1,7 @@
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from gensim.matutils import Sparse2Corpus
 
+
 def vectorize(texts, method='count', vectorizer_params=None):
     if vectorizer_params is None:
         vectorizer_params = {}

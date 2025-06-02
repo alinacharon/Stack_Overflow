@@ -1,7 +1,4 @@
-import os
-import mlflow
 import numpy as np
-from gensim import models
 from gensim.models import CoherenceModel
 from gensim.models.ldamodel import LdaModel
 import pyLDAvis
@@ -11,35 +8,8 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 
 
-def train_lda_model(corpus, dictionary, num_topics, passes):
-    """
-    Обучает LDA модель и сохраняет её с помощью MLflow
-    """
-    lda_model = models.LdaModel(
-        corpus=corpus,
-        id2word=dictionary,
-        num_topics=num_topics,
-        passes=passes
-    )
-
-    mlflow.log_param('num_topics', num_topics)
-    mlflow.log_param('passes', passes)
-
-    model_dir = 'models/lda'
-    os.makedirs(model_dir, exist_ok=True)
-
-    model_path = os.path.join(model_dir, 'lda_model.gensim')
-    lda_model.save(model_path)
-
-    mlflow.log_artifact(model_path, artifact_path='models')
-
-    return lda_model
-
-
 def calculate_coherence(model, corpus, dictionary, texts, coherence_type='c_v'):
-    """
-    Вычисляет когерентность модели
-    """
+    
     coherence_model = CoherenceModel(
         model=model,
         texts=texts,
@@ -51,9 +21,7 @@ def calculate_coherence(model, corpus, dictionary, texts, coherence_type='c_v'):
 
 
 def calculate_topic_diversity(model, num_topics):
-    """
-    Вычисляет разнообразие тем
-    """
+    
     topic_words = []
     for i in range(num_topics):
         topic_words.append([word for word, _ in model.show_topic(i, topn=20)])
@@ -66,9 +34,7 @@ def calculate_topic_diversity(model, num_topics):
 
 
 def calculate_topic_balance(model, corpus):
-    """
-    Вычисляет баланс тем
-    """
+
     topic_distributions = []
     for doc in corpus:
         topic_dist = model.get_document_topics(doc)
@@ -78,19 +44,14 @@ def calculate_topic_balance(model, corpus):
     return avg_entropy
 
 
-def visualize_topics(model, corpus, dictionary, output_path='outputs/reports/lda_visualization.html'):
-    """
-    Создает визуализацию тем с помощью pyLDAvis
-    """
+def visualize_topics(model, corpus, dictionary, output_path='lda_visualization.html'):
+
     vis = pyLDAvis.gensim_models.prepare(model, corpus, dictionary)
     pyLDAvis.save_html(vis, output_path)
-    mlflow.log_artifact(output_path, artifact_path='reports')
 
 
-def visualize_document_distribution(model, corpus, output_path='outputs/reports/document_distribution.png'):
-    """
-    Создает визуализацию распределения документов в пространстве тем
-    """
+def visualize_document_distribution(model, corpus, output_path='document_distribution.png'):
+
     num_topics = model.num_topics
     doc_topics = []
     for doc in corpus:
@@ -108,13 +69,10 @@ def visualize_document_distribution(model, corpus, output_path='outputs/reports/
     plt.title('Document distribution in topic space')
     plt.savefig(output_path)
     plt.close()
-    mlflow.log_artifact(output_path, artifact_path='reports')
 
 
 def evaluate_lda_model(model, corpus, dictionary, texts, num_topics):
-    """
-    Вычисляет все метрики качества модели
-    """
+   
     metrics = {
         'perplexity': model.log_perplexity(corpus),
         'coherence_cv': calculate_coherence(model, corpus, dictionary, texts, 'c_v'),
@@ -123,25 +81,4 @@ def evaluate_lda_model(model, corpus, dictionary, texts, num_topics):
         'topic_balance': calculate_topic_balance(model, corpus)
     }
 
-    # Логируем метрики в MLflow
-    for metric_name, metric_value in metrics.items():
-        mlflow.log_metric(metric_name, metric_value)
-
     return metrics
-
-
-def train_and_evaluate_lda(corpus, dictionary, texts, num_topics, passes):
-    """
-    Обучает модель и вычисляет все метрики качества
-    """
-    # Обучаем модель
-    model = train_lda_model(corpus, dictionary, num_topics, passes)
-
-    # Вычисляем метрики
-    metrics = evaluate_lda_model(model, corpus, dictionary, texts, num_topics)
-
-    # Создаем визуализации
-    visualize_topics(model, corpus, dictionary)
-    visualize_document_distribution(model, corpus)
-
-    return model, metrics
