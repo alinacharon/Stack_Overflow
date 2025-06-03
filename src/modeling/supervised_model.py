@@ -1,5 +1,4 @@
 import joblib
-import mlflow
 import numpy as np
 import pandas as pd
 from sklearn.multioutput import MultiOutputClassifier
@@ -30,9 +29,9 @@ def get_base_model(model_name, model_params):
 
 def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', config=None):
     """Train classifier with specified model and parameters"""
-    mlflow.set_tag("task", "multi-label classification")
-    mlflow.log_param("model_name", model_name)
-    mlflow.log_param("use_sample", config['data'].get('use_sample', False))
+    # Generate timestamp for unique model names
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_run_name = f"{model_name}_{timestamp}"
 
     # Log data information
     logger.info(f"\nData Information:")
@@ -60,29 +59,13 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
     y_test = y_test[columns_to_keep]
     logger.info(f"Number of labels after cleaning: {len(columns_to_keep)}")
 
-    # Log data sizes in MLflow
-    mlflow.log_param("train_size", X_train.shape[0])
-    mlflow.log_param("test_size", X_test.shape[0])
-    mlflow.log_param("n_features", X_train.shape[1])
-    mlflow.log_param("n_labels", len(columns_to_keep))
-    if config['data'].get('use_sample', False):
-        mlflow.log_param("sample_size", config['data']['sample']['size'])
-        mlflow.log_param("top_n_tags", config['data']['sample']['top_n_tags'])
-
     # Create directory for reports
     reports_dir = 'outputs/reports'
     os.makedirs(reports_dir, exist_ok=True)
 
-    # Generate timestamp for unique file names
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
     model_config = config['supervised']['models'].get(model_name, {})
     base_params = model_config.get('base_params', {})
     search_params = model_config.get('search_params', None)
-
-    # Log basic parameters
-    for param, value in base_params.items():
-        mlflow.log_param(f"base_{param}", value)
 
     base_model = get_base_model(model_name, base_params)
     multi_model = MultiOutputClassifier(base_model)
@@ -114,38 +97,26 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
     y_test = safe_cast_y(y_test)
 
     if search_params:
-        mlflow.set_tag("tuning", "RandomizedSearchCV")
-        # Log search parameters
-        for param, values in search_params.items():
-            mlflow.log_param(f"search_{param}", values)
-
-        n_iter = 2  
-
+        logger.info(f"Starting RandomizedSearchCV for {model_name}...")
+        n_iter = 2
         random_search = RandomizedSearchCV(
             estimator=multi_model,
             param_distributions=search_params,
             n_iter=n_iter,
-            cv=2,  
+            cv=2,
             scoring='f1_micro',
             verbose=1,
             n_jobs=-1,
             random_state=42
         )
-
-        logger.info(f"Starting RandomizedSearchCV for {model_name}...")
         random_search.fit(X_train, y_train)
         model = random_search.best_estimator_
-
-        # Log search results
-        mlflow.log_params(random_search.best_params_)
-        mlflow.log_metric("best_cv_score", random_search.best_score_)
 
         # Save search results
         cv_results = pd.DataFrame(random_search.cv_results_)
         cv_results_path = os.path.join(
             reports_dir, f"cv_results_{model_name}_{timestamp}.csv")
         cv_results.to_csv(cv_results_path, index=False)
-        mlflow.log_artifact(cv_results_path)
     else:
         logger.info(f"Training {model_name} with base parameters...")
         model = multi_model
@@ -162,10 +133,6 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
     logger.info(f"Precision micro: {precision:.4f}")
     logger.info(f"Recall micro: {recall:.4f}")
 
-    mlflow.log_metric("f1_micro", f1)
-    mlflow.log_metric("precision_micro", precision)
-    mlflow.log_metric("recall_micro", recall)
-
     # Save detailed report
     report = classification_report(y_test, predictions)
     logger.info("\nClassification Report:")
@@ -175,11 +142,27 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
         reports_dir, f"classification_report_{model_name}_{timestamp}.txt")
     with open(report_path, "w") as f:
         f.write(report)
-    mlflow.log_artifact(report_path)
 
-    # Save the model
-    model_path = f"models/supervised/{model_name}.pkl"
+    # Save the model with timestamp
+    model_dir = 'models/supervised'
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = os.path.join(model_dir, f"{model_run_name}.pkl")
     joblib.dump(model, model_path)
-    mlflow.log_artifact(model_path)
 
-    return model
+    return model, {
+        'model_path': model_path,
+        'report_path': report_path,
+        'cv_results_path': cv_results_path if search_params else None,
+        'metrics': {
+            'f1_micro': f1,
+            'precision_micro': precision,
+            'recall_micro': recall
+        },
+        'predictions': predictions,
+        'y_test': y_test,
+        'model_name': model_name,
+        'timestamp': timestamp,
+        'search_params': search_params,
+        'best_params': random_search.best_params_ if search_params else None,
+        'best_score': random_search.best_score_ if search_params else None
+    }

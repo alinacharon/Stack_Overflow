@@ -1,37 +1,55 @@
+task_type: supervised # supervised, lda, embedding ✅
+
 data:
-  train_path: data/X_text.csv
-  target_path: data/Y_tags.csv
-  test_path: data/test/X_text_test.csv
-  test_target_path: data/test/Y_tags_test.csv
-  use_sample: false # true for sample data or false for full data
+  use_sample: false # Use a sample or full dataset ✅
   sample:
     size: 5000
     top_n_tags: 20
     output_dir: data/sampled
     seed: 42
-
-lda:
-  num_topics: 10
-  passes: 10
-  random_state: 42
-  model_path: models/lda/lda_model.gensim
-
-vectorizer:
-  method: tfidf
-  params:
-    max_features: 2000
-    stop_words: english
+  # Paths for full data
+  train_path: data/X_text.csv
+  target_path: data/Y_tags.csv
+  # Paths for train/test data
+  train:
+    sample_path: data/sampled/train/X_train.csv # for sample
+    sample_target_path: data/sampled/train/Y_train.csv # for sample
+    full_path: data/train/X_train.csv # for full dataset
+    full_target_path: data/train/Y_train.csv # for full dataset
+  test:
+    sample_path: data/sampled/test/X_test.csv # for sample
+    sample_target_path: data/sampled/test/Y_test.csv # for sample
+    full_path: data/test/X_test.csv # for full dataset
+    full_target_path: data/test/Y_test.csv # for full dataset
+  test_size: 0.2 # test sample size
 
 mlflow:
-  experiment_name: xgboost full data # enter experiment_name
+  experiment_name: supervised_xgboost_full_experiment # ✅
   tracking_uri: sqlite:///mlflow.db
   registry_uri: sqlite:///mlflow.db
   artifacts_location: ./mlruns
 
-task_type: supervised # supervised or lda
+# Settings for vectorizer
+vectorizer:
+  method: tfidf # tfidf or count ✅
+  params:
+    max_features: 5000
+    stop_words: english
 
+# Settings for LDA model
+lda:
+  model: lda
+  num_topics: 10
+  passes: 10
+  model_path: models/lda/lda_model.gensim
+  visualization:
+    output_dir: outputs/reports
+    topics_vis_path: lda_visualization.html
+    distribution_vis_path: document_distribution.png
+
+# Settings for supervised models
 supervised:
-  model: xgboost # choices: logreg, random_forest, xgboost
+  model: xgboost # logreg, rf, или xgboost ✅
   models:
     logreg:
       base_params:
@@ -48,7 +66,7 @@ supervised:
         estimator__penalty: ["l2"]
         estimator__max_iter: [1000]
 
-    random_forest:
+    rf:
       base_params:
         random_state: 42
         n_jobs: -1
@@ -67,8 +85,9 @@ supervised:
 
     xgboost:
       base_params:
-        eval_metric: logloss
-        use_label_encoder: False
+        objective: "binary:logistic"
+        eval_metric: "logloss"
+        use_label_encoder: false
         random_state: 42
         n_jobs: -1
         n_estimators: 200
@@ -76,14 +95,71 @@ supervised:
         learning_rate: 0.1
         subsample: 0.8
         colsample_bytree: 0.8
+        tree_method: "hist"
+        scale_pos_weight: 1
       search_params:
         estimator__n_estimators: [100, 200, 300]
         estimator__max_depth: [4, 6, 8]
-        estimator__learning_rate: [0.05, 0.1, 0.2]
+        estimator__learning_rate: [0.01, 0.05, 0.1]
         estimator__subsample: [0.8, 1.0]
         estimator__colsample_bytree: [0.8, 1.0]
+        estimator__min_child_weight: [1, 3, 5]
 
-classifier:
-  model_name: logreg
-  multilabel_targets_path: data/Y_tags.csv
-  model_path: models/supervised/classifier_logreg.pkl
+# Settings for embedding models
+embedding:
+  model: word2vec # bert, use, word2vec
+  models:
+    bert:
+      model_name: "all-MiniLM-L6-v2"
+      base_params:
+        model_name: "bert-base-uncased"
+        max_length: 512
+    use:
+      model_url: "https://tfhub.dev/google/universal-sentence-encoder/4"
+      base_params:
+        batch_size: 32
+    word2vec:
+      vector_size: 300
+      window: 5
+      min_count: 1
+      workers: 4
+      base_params:
+        model_name: "word2vec-google-news-300"
+  classifier: xgboost # xgboost, logreg, rf
+  classifiers:
+    xgboost:
+      base_params:
+        n_estimators: 100
+        max_depth: 5
+        learning_rate: 0.1
+        random_state: 42
+      search_params:
+        estimator__n_estimators: [50, 100, 200]
+        estimator__max_depth: [3, 5, 7]
+        estimator__learning_rate: [0.01, 0.1, 0.2]
+    logreg:
+      base_params:
+        solver: saga
+        max_iter: 1000
+        random_state: 42
+        n_jobs: -1
+        class_weight: "balanced"
+      search_params:
+        estimator__C: [0.1, 1.0]
+        estimator__class_weight: ["balanced"]
+    rf:
+      base_params:
+        random_state: 42
+        n_jobs: -1
+        n_estimators: 200
+        max_depth: 20
+        min_samples_split: 5
+        min_samples_leaf: 2
+        max_features: "sqrt"
+        class_weight: "balanced"
+      search_params:
+        estimator__n_estimators: [100, 200, 300]
+        estimator__max_depth: [10, 20, 30]
+        estimator__min_samples_split: [2, 5]
+        estimator__min_samples_leaf: [1, 2]
+        estimator__max_features: ["sqrt", "log2"]

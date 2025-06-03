@@ -1,5 +1,4 @@
 import os
-import mlflow
 import numpy as np
 from gensim import models
 from gensim.models import CoherenceModel
@@ -9,12 +8,21 @@ import pyLDAvis.gensim_models
 from scipy.stats import entropy
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def train_lda_model(corpus, dictionary, num_topics, passes):
     """
-    Обучает LDA модель и сохраняет её с помощью MLflow
+    Train LDA model with specified parameters
     """
+    # Generate timestamp for unique model names
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_run_name = f"lda_{num_topics}topics_{timestamp}"
+
+    logger.info(f"Training LDA model with {num_topics} topics...")
     lda_model = models.LdaModel(
         corpus=corpus,
         id2word=dictionary,
@@ -22,23 +30,24 @@ def train_lda_model(corpus, dictionary, num_topics, passes):
         passes=passes
     )
 
-    mlflow.log_param('num_topics', num_topics)
-    mlflow.log_param('passes', passes)
-
+    # Save model
     model_dir = 'models/lda'
     os.makedirs(model_dir, exist_ok=True)
-
-    model_path = os.path.join(model_dir, 'lda_model.gensim')
+    model_path = os.path.join(model_dir, f"{model_run_name}.gensim")
     lda_model.save(model_path)
 
-    mlflow.log_artifact(model_path, artifact_path='models')
-
-    return lda_model
+    return lda_model, {
+        'model_path': model_path,
+        'model_name': 'lda',
+        'timestamp': timestamp,
+        'num_topics': num_topics,
+        'passes': passes
+    }
 
 
 def calculate_coherence(model, corpus, dictionary, texts, coherence_type='c_v'):
     """
-    Вычисляет когерентность модели
+    Calculate topic coherence score
     """
     coherence_model = CoherenceModel(
         model=model,
@@ -52,7 +61,8 @@ def calculate_coherence(model, corpus, dictionary, texts, coherence_type='c_v'):
 
 def calculate_topic_diversity(model, num_topics):
     """
-    Вычисляет разнообразие тем
+    Calculate topic diversity score
+
     """
     topic_words = []
     for i in range(num_topics):
@@ -67,7 +77,8 @@ def calculate_topic_diversity(model, num_topics):
 
 def calculate_topic_balance(model, corpus):
     """
-    Вычисляет баланс тем
+    Calculate topic balance score using entropy
+
     """
     topic_distributions = []
     for doc in corpus:
@@ -78,19 +89,31 @@ def calculate_topic_balance(model, corpus):
     return avg_entropy
 
 
-def visualize_topics(model, corpus, dictionary, output_path='outputs/reports/lda_visualization.html'):
+def visualize_topics(model, corpus, dictionary, output_path=None, config=None):
     """
-    Создает визуализацию тем с помощью pyLDAvis
+    Create interactive visualization of topics using pyLDAvis
     """
+    if output_path is None and config is not None:
+        output_dir = config['lda']['visualization']['output_dir']
+        output_path = os.path.join(
+            output_dir, config['lda']['visualization']['topics_vis_path'])
+
+    logger.info("Creating topic visualization...")
     vis = pyLDAvis.gensim_models.prepare(model, corpus, dictionary)
     pyLDAvis.save_html(vis, output_path)
-    mlflow.log_artifact(output_path, artifact_path='reports')
+    return output_path
 
 
-def visualize_document_distribution(model, corpus, output_path='outputs/reports/document_distribution.png'):
+def visualize_document_distribution(model, corpus, output_path=None, config=None):
     """
-    Создает визуализацию распределения документов в пространстве тем
+    Create 2D visualization of document distribution in topic space
     """
+    if output_path is None and config is not None:
+        output_dir = config['lda']['visualization']['output_dir']
+        output_path = os.path.join(
+            output_dir, config['lda']['visualization']['distribution_vis_path'])
+
+    logger.info("Creating document distribution visualization...")
     num_topics = model.num_topics
     doc_topics = []
     for doc in corpus:
@@ -108,13 +131,14 @@ def visualize_document_distribution(model, corpus, output_path='outputs/reports/
     plt.title('Document distribution in topic space')
     plt.savefig(output_path)
     plt.close()
-    mlflow.log_artifact(output_path, artifact_path='reports')
+    return output_path
 
 
 def evaluate_lda_model(model, corpus, dictionary, texts, num_topics):
     """
-    Вычисляет все метрики качества модели
+    Evaluate LDA model using multiple metrics
     """
+    logger.info("Evaluating LDA model...")
     metrics = {
         'perplexity': model.log_perplexity(corpus),
         'coherence_cv': calculate_coherence(model, corpus, dictionary, texts, 'c_v'),
@@ -123,25 +147,35 @@ def evaluate_lda_model(model, corpus, dictionary, texts, num_topics):
         'topic_balance': calculate_topic_balance(model, corpus)
     }
 
-    # Логируем метрики в MLflow
+    # Log metrics
     for metric_name, metric_value in metrics.items():
-        mlflow.log_metric(metric_name, metric_value)
+        logger.info(f"{metric_name}: {metric_value:.4f}")
 
     return metrics
 
 
-def train_and_evaluate_lda(corpus, dictionary, texts, num_topics, passes):
+def train_and_evaluate_lda(corpus, dictionary, texts, num_topics, passes, config=None):
     """
-    Обучает модель и вычисляет все метрики качества
+    Train and evaluate LDA model with visualization
     """
-    # Обучаем модель
-    model = train_lda_model(corpus, dictionary, num_topics, passes)
+    logger.info(
+        f"Starting LDA training and evaluation with {num_topics} topics...")
 
-    # Вычисляем метрики
+    # Train model
+    model, model_info = train_lda_model(corpus, dictionary, num_topics, passes)
+
+    # Evaluate model
     metrics = evaluate_lda_model(model, corpus, dictionary, texts, num_topics)
 
-    # Создаем визуализации
-    visualize_topics(model, corpus, dictionary)
-    visualize_document_distribution(model, corpus)
+    # Create visualizations
+    vis_path = visualize_topics(model, corpus, dictionary, config=config)
+    dist_path = visualize_document_distribution(model, corpus, config=config)
 
-    return model, metrics
+    logger.info("LDA training and evaluation completed successfully")
+
+    return model, {
+        **model_info,
+        'metrics': metrics,
+        'visualization_path': vis_path,
+        'distribution_path': dist_path
+    }

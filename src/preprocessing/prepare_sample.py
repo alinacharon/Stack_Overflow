@@ -88,13 +88,3 @@ def prepare_sample(config_path='config/config.yaml'):
 
     return X_sample, Y_sample
 
-
-if __name__ == '__main__':
-    # Logging setup
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    # Run sample preparation
-    prepare_sample()

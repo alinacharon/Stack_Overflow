@@ -3,14 +3,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-def is_numeric(s):
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-
 def visualize_classification_report(file_path):
     # Read the report file
     with open(file_path, 'r') as f:
@@ -42,7 +34,7 @@ def visualize_classification_report(file_path):
     default_color = '#825ea2'
 
     # Create graphs
-    plt.figure(figsize=(15, 5))
+    plt.figure(figsize=(15, 5), dpi=150)
 
     # 1. Precision graph
     plt.subplot(1, 3, 1)
@@ -74,7 +66,7 @@ def visualize_classification_report(file_path):
                         'precision', 'recall', 'f1-score'])
     sns.heatmap(df_melted.pivot(index='class', columns='variable', values='value'),
                 annot=True,
-                cmap='coolwarm',
+                cmap='viridis',
                 vmin=0,
                 vmax=1)
     plt.title('Heatmap of metrics by class')
@@ -110,7 +102,6 @@ def compare_models_metrics(model_dfs):
 
     df = pd.DataFrame(all_metrics)
 
-
     # Set style
     sns.set_style('darkgrid')
 
@@ -124,28 +115,16 @@ def compare_models_metrics(model_dfs):
                                     var_name='metric',
                                     value_name='value')
 
-    sns.barplot(x='model', y='value', hue='metric', data=df_macro_melted)
-    plt.title('Comparison of models (macro avg)')
-    plt.xlabel('Model')
-    plt.ylabel('Score')
+    ax = sns.barplot(x='model', y='value', hue='metric',
+                     data=df_macro_melted, palette='pastel')
+    plt.title('Comparison of metrics by models', fontsize=14)
+    plt.xlabel('Model', fontsize=12)
+    plt.ylabel('Score', fontsize=12)
     plt.xticks(rotation=45)
-    plt.ylim(0, 1)
-    plt.tight_layout()
-    plt.show()
 
-    # weighted avg
-    plt.figure(figsize=(12, 6))
-    df_weighted = df[df['avg_type'] == 'weighted']
-    df_weighted_melted = df_weighted.melt(id_vars=['model'],
-                                          value_vars=metrics,
-                                          var_name='metric',
-                                          value_name='value')
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.3f', padding=3)
 
-    sns.barplot(x='model', y='value', hue='metric', data=df_weighted_melted)
-    plt.title('Comparison of models (weighted avg)')
-    plt.xlabel('Model')
-    plt.ylabel('Score')
-    plt.xticks(rotation=45)
-    plt.ylim(0, 1)
+    plt.legend(title='Metric', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.show()
