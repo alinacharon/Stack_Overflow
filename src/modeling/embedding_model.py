@@ -1,17 +1,14 @@
-import os
 import numpy as np
-import pandas as pd
 import logging
 from datetime import datetime
 from transformers import BertTokenizer, BertModel
 import tensorflow_hub as hub
 import gensim.downloader as api
-from sklearn.multioutput import MultiOutputClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
-from sklearn.metrics import classification_report, f1_score, precision_score, recall_score
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
 import joblib
 import torch
 from tqdm import tqdm
@@ -60,19 +57,29 @@ class EmbeddingModel:
     def get_embeddings(self, texts):
         """Get embeddings for texts"""
         try:
+            if not isinstance(texts, (list, np.ndarray)):
+                texts = [texts]
+
             if self.model_name == 'word2vec':
                 embeddings = []
                 for text in tqdm(texts, desc="Generating Word2Vec embeddings"):
+                    if not isinstance(text, str):
+                        text = str(text)
                     words = text.lower().split()
                     vectors = [self.embedding_model[word]
                                for word in words if word in self.embedding_model]
-                    embeddings.append(np.mean(vectors, axis=0) if vectors else np.zeros(
-                        self.embedding_model.vector_size))
+                    if not vectors:
+                        logger.warning(
+                            f"No vectors found for text: {text[:100]}...")
+                        vectors = [np.zeros(self.embedding_model.vector_size)]
+                    embeddings.append(np.mean(vectors, axis=0))
                 return np.array(embeddings)
 
             elif self.model_name == 'bert':
                 embeddings = []
                 for text in tqdm(texts, desc="Generating BERT embeddings"):
+                    if not isinstance(text, str):
+                        text = str(text)
                     inputs = self.tokenizer(
                         text, return_tensors='pt', truncation=True, padding=True, max_length=512)
                     with torch.no_grad():
@@ -86,6 +93,8 @@ class EmbeddingModel:
                 batch_size = 32
                 for i in tqdm(range(0, len(texts), batch_size), desc="Generating USE embeddings"):
                     batch = texts[i:i + batch_size]
+                    # Convert all elements to strings
+                    batch = [str(text) for text in batch]
                     batch_embeddings = self.embedding_model(batch).numpy()
                     embeddings.append(batch_embeddings)
                 return np.vstack(embeddings)
@@ -107,101 +116,67 @@ class EmbeddingModel:
 
     def train_classifier(self, X_train, y_train, X_test, y_test, config):
         """Train classifier on embeddings"""
+        # Convert inputs to numpy arrays if they are lists
+        X_train = np.array(X_train) if isinstance(X_train, list) else X_train
+        X_test = np.array(X_test) if isinstance(X_test, list) else X_test
+        y_train = np.array(y_train) if isinstance(y_train, list) else y_train
+        y_test = np.array(y_test) if isinstance(y_test, list) else y_test
+
         # Generate timestamp for unique model names
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         model_run_name = f"{self.model_name}_{timestamp}"
 
-        # Log data information
-        logger.info(f"\nData Information:")
-        logger.info(f"Training set size: {X_train.shape}")
-        logger.info(f"Test set size: {X_test.shape}")
-        logger.info(f"Number of features: {X_train.shape[1]}")
-        logger.info(f"Number of labels: {y_train.shape[1]}")
+        # Get embeddings
+        X_train_embeddings = self.get_embeddings(X_train)
+        X_test_embeddings = self.get_embeddings(X_test)
 
-        # Create directory for reports
-        reports_dir = 'outputs/reports'
-        os.makedirs(reports_dir, exist_ok=True)
-
-        # Get classifier parameters
+        # Initialize classifier
         classifier_name = config['embedding']['classifier']
         classifier_config = config['embedding']['classifiers'].get(
             classifier_name, {})
         base_params = classifier_config.get('base_params', {})
-        search_params = classifier_config.get('search_params', None)
+        search_params = classifier_config.get('search_params', {})
 
-        # Create and train classifier
-        base_model = self.get_base_classifier(classifier_name, base_params)
-        multi_model = MultiOutputClassifier(base_model)
-
-        if search_params:
-            random_search = RandomizedSearchCV(
-                estimator=multi_model,
-                param_distributions=search_params,
-                n_iter=5,
-                cv=3,
-                scoring='f1_micro',
-                verbose=1,
-                n_jobs=-1,
-                random_state=42
-            )
-
-            logger.info(f"Launch RandomizedSearchCV for {classifier_name}...")
-            random_search.fit(X_train, y_train)
-            self.classifier = random_search.best_estimator_
-
-            # Save search results
-            cv_results = pd.DataFrame(random_search.cv_results_)
-            cv_results_path = os.path.join(
-                reports_dir, f"cv_results_{model_run_name}.csv")
-            cv_results.to_csv(cv_results_path, index=False)
+        if classifier_name == 'logistic':
+            from sklearn.linear_model import LogisticRegression
+            classifier = LogisticRegression(**base_params)
+        elif classifier_name == 'svm':
+            from sklearn.svm import SVC
+            classifier = SVC(**base_params)
+        elif classifier_name == 'random_forest':
+            from sklearn.ensemble import RandomForestClassifier
+            classifier = RandomForestClassifier(**base_params)
+        elif classifier_name == 'xgboost':
+            from xgboost import XGBClassifier
+            classifier = XGBClassifier(**base_params)
         else:
-            logger.info(f"Training {classifier_name} with base parameters...")
-            self.classifier = multi_model
-            self.classifier.fit(X_train, y_train)
+            raise ValueError(f"Unsupported classifier: {classifier_name}")
 
-        # Evaluate model
-        predictions = self.classifier.predict(X_test)
-        f1 = f1_score(y_test, predictions, average='micro')
-        precision = precision_score(y_test, predictions, average='micro')
-        recall = recall_score(y_test, predictions, average='micro')
+        # Train classifier
+        classifier.fit(X_train_embeddings, y_train)
 
-        logger.info(f"\nModel performance metrics:")
-        logger.info(f"F1 micro: {f1:.4f}")
-        logger.info(f"Precision micro: {precision:.4f}")
-        logger.info(f"Recall micro: {recall:.4f}")
+        # Make predictions
+        y_pred = classifier.predict(X_test_embeddings)
 
-        # Save detailed report
-        report = classification_report(y_test, predictions)
-        logger.info("\nClassification Report:")
-        logger.info(report)
+        # Calculate metrics
+        metrics = {
+            'accuracy': accuracy_score(y_test, y_pred),
+            'precision_micro': precision_score(y_test, y_pred, average='micro', zero_division=0),
+            'recall_micro': recall_score(y_test, y_pred, average='micro', zero_division=0),
+            'f1_micro': f1_score(y_test, y_pred, average='micro', zero_division=0)
+        }
 
-        report_path = os.path.join(
-            reports_dir, f"classification_report_{model_run_name}.txt")
-        with open(report_path, "w") as f:
-            f.write(report)
+        # Save model
+        model_path = f"models/embedding/{model_run_name}.pkl"
+        joblib.dump(classifier, model_path)
 
-        # Save model with timestamp
-        model_dir = 'models/embedding'
-        os.makedirs(model_dir, exist_ok=True)
-        model_path = os.path.join(model_dir, f"{model_run_name}.pkl")
-        joblib.dump(self.classifier, model_path)
-
-        return self.classifier, {
-            'model_path': model_path,
-            'report_path': report_path,
-            'cv_results_path': cv_results_path if search_params else None,
-            'metrics': {
-                'f1_micro': f1,
-                'precision_micro': precision,
-                'recall_micro': recall
-            },
-            'predictions': predictions,
-            'y_test': y_test,
-            'model_name': self.model_name,
+        return classifier, {
+            'model': classifier,
+            'model_name': model_run_name,
             'timestamp': timestamp,
-            'search_params': search_params,
-            'best_params': random_search.best_params_ if search_params else None,
-            'best_score': random_search.best_score_ if search_params else None,
+            'metrics': metrics,
+            'predictions': y_pred,
+            'y_test': y_test,
             'embedding_model': self.model_name,
             'classifier_name': classifier_name
         }

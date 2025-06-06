@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - API_PORT=3000
+      - MODEL_TYPE=supervised  # Options: supervised, bert, use
+      - MODEL_PATH=/app/models/final/model.pkl
+      - EMBEDDING_MODEL_PATH=/app/models/final/embedding_model.pkl
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/api.log
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs 

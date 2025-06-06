@@ -5,7 +5,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
-from sklearn.metrics import classification_report, f1_score, precision_score, recall_score
+from sklearn.metrics import classification_report, f1_score, precision_score, recall_score, accuracy_score
 from sklearn.model_selection import RandomizedSearchCV
 import scipy.sparse
 import logging
@@ -70,17 +70,6 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
     base_model = get_base_model(model_name, base_params)
     multi_model = MultiOutputClassifier(base_model)
 
-    def safe_cast(X):
-        """Safely cast input data to float32"""
-        if scipy.sparse.issparse(X):
-            return X.astype(np.float32)
-        elif isinstance(X, pd.DataFrame):
-            return X.values.astype(np.float32)
-        elif isinstance(X, np.ndarray):
-            return X.astype(np.float32)
-        else:
-            raise TypeError(f"Unsupported input type: {type(X)}")
-
     def safe_cast_y(y):
         """Safely cast target data to int32"""
         if isinstance(y, pd.DataFrame):
@@ -90,11 +79,26 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
         else:
             return np.array(y, dtype=np.int32)
 
-    # Prepare data
-    X_train = safe_cast(X_train)
-    X_test = safe_cast(X_test)
+    # Prepare target data
     y_train = safe_cast_y(y_train)
     y_test = safe_cast_y(y_test)
+
+    # Convert sparse matrix to dense if needed
+    if scipy.sparse.issparse(X_train):
+        X_train = X_train.toarray()
+    if scipy.sparse.issparse(X_test):
+        X_test = X_test.toarray()
+
+    # Convert to numpy array if DataFrame
+    if isinstance(X_train, pd.DataFrame):
+        X_train = X_train.values
+    if isinstance(X_test, pd.DataFrame):
+        X_test = X_test.values
+
+    # Ensure float32 type for XGBoost
+    if model_name == 'xgboost':
+        X_train = X_train.astype(np.float32)
+        X_test = X_test.astype(np.float32)
 
     if search_params:
         logger.info(f"Starting RandomizedSearchCV for {model_name}...")
@@ -103,7 +107,7 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
             estimator=multi_model,
             param_distributions=search_params,
             n_iter=n_iter,
-            cv=2,
+            cv=3,
             scoring='f1_micro',
             verbose=1,
             n_jobs=-1,
@@ -124,20 +128,15 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
 
     # Evaluation
     predictions = model.predict(X_test)
-    f1 = f1_score(y_test, predictions, average='micro')
-    precision = precision_score(y_test, predictions, average='micro')
-    recall = recall_score(y_test, predictions, average='micro')
-
-    logger.info(f"\nModel Performance Metrics:")
-    logger.info(f"F1 micro: {f1:.4f}")
-    logger.info(f"Precision micro: {precision:.4f}")
-    logger.info(f"Recall micro: {recall:.4f}")
+    f1 = f1_score(y_test, predictions, average='micro', zero_division=0)
+    precision = precision_score(
+        y_test, predictions, average='micro', zero_division=0)
+    recall = recall_score(y_test, predictions,
+                          average='micro', zero_division=0)
+    accuracy = accuracy_score(y_test, predictions)
 
     # Save detailed report
-    report = classification_report(y_test, predictions)
-    logger.info("\nClassification Report:")
-    logger.info(report)
-
+    report = classification_report(y_test, predictions, zero_division=0)
     report_path = os.path.join(
         reports_dir, f"classification_report_{model_name}_{timestamp}.txt")
     with open(report_path, "w") as f:
@@ -150,10 +149,12 @@ def train_classifier(X_train, y_train, X_test, y_test, model_name='logreg', conf
     joblib.dump(model, model_path)
 
     return model, {
+        'model': model,
         'model_path': model_path,
         'report_path': report_path,
         'cv_results_path': cv_results_path if search_params else None,
         'metrics': {
+            'accuracy': accuracy,
             'f1_micro': f1,
             'precision_micro': precision,
             'recall_micro': recall

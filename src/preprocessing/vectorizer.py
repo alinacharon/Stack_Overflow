@@ -1,5 +1,4 @@
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from gensim.matutils import Sparse2Corpus
 
 
 def vectorize(texts, method='count', vectorizer_params=None):
@@ -15,8 +14,3 @@ def vectorize(texts, method='count', vectorizer_params=None):
 
     X = vec.fit_transform(texts)
     return X, vec
-
-def convert_to_gensim(X, vec):
-    corpus = Sparse2Corpus(X, documents_columns=False)
-    id2word = dict((id, word) for word, id in vec.vocabulary_.items())
-    return corpus, id2word

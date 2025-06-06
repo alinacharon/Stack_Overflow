@@ -1,9 +1,10 @@
-import os
-import joblib
 from sklearn.preprocessing import MultiLabelBinarizer
+import joblib
+import os
 
 
 def fit_and_binarize(tags, save_path='models/supervised/mlb.pkl'):
+    """Fit MultiLabelBinarizer and transform tags to binary format"""
     mlb = MultiLabelBinarizer()
     Y = mlb.fit_transform(tags)
 
@@ -13,10 +14,3 @@ def fit_and_binarize(tags, save_path='models/supervised/mlb.pkl'):
 
     columns = mlb.classes_
     return Y, mlb, columns
-
-
-def load_binarizer(path='models/supervised/mlb.pkl'):
-    """
-    Load a saved MultiLabelBinarizer from disk.
-    """
-    return joblib.load(path)

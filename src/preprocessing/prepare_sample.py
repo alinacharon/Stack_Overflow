@@ -1,25 +1,9 @@
-# preprocessing/prepare_sample.py
-
-import pandas as pd
 from collections import Counter
-import yaml
-import os
 import logging
+import pandas as pd
+import os
 
 logger = logging.getLogger(__name__)
-
-
-def load_config(config_path='config/config.yaml'):
-    """Loading configuration from yaml file"""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-
-def load_data(x_path, y_path):
-    """Loading data from CSV files"""
-    X = pd.read_csv(x_path)
-    Y = pd.read_csv(y_path, converters={'Tags': eval})
-    return X, Y
 
 
 def get_top_tags(Y, top_n):
@@ -54,37 +38,38 @@ def save_sample(X_sample, Y_sample, out_dir):
         f"Sample saved to:\n - {x_path} ({X_sample.shape})\n - {y_path} ({Y_sample.shape})")
 
 
-def prepare_sample(config_path='config/config.yaml'):
-    """Main function for preparing sample of data"""
-    config = load_config(config_path)
+def load_data(x_path, y_path):
+    """Loading data from CSV files"""
+    logger.info(f"Loading data from:\n - {x_path}\n - {y_path}")
+    X = pd.read_csv(x_path)
+    Y = pd.read_csv(y_path, converters={'Tags': eval})
+    return X, Y
 
-    if not config['data'].get('use_sample', False):
-        logger.info("Sample preparation skipped: use_sample is False")
-        return None, None
 
-    sample_config = config['data'].get('sample', {})
-    x_path = config['data']['train_path']
-    y_path = config['data']['target_path']
+def create_sample(config):
+    """Create sample from full dataset using configuration parameters"""
+    # Load full dataset
+    X, Y = load_data(config['data']['train_path'],
+                     config['data']['target_path'])
 
-    logger.info("Loading data...")
-    X, Y = load_data(x_path, y_path)
+    # Get top N tags
+    top_tags = get_top_tags(Y, config['data']['sample']['top_n_tags'])
+    logger.info(f"Selected top {len(top_tags)} tags")
 
-    logger.info(f"Getting top {sample_config['top_n_tags']} tags...")
-    top_tags = get_top_tags(Y, sample_config['top_n_tags'])
-
-    logger.info("Filtering by top tags...")
+    # Filter data by top tags
     X_filtered, Y_filtered = filter_by_top_tags(X, Y, top_tags)
+    logger.info(f"Data after filtering by top tags: {X_filtered.shape}")
 
-    logger.info(f"Creating sample of size {sample_config['size']}...")
+    # Create sample
     X_sample, Y_sample = sample_data(
         X_filtered,
         Y_filtered,
-        sample_config['size'],
-        sample_config['seed']
+        config['data']['sample']['size'],
+        config['data']['sample']['seed']
     )
+    logger.info(f"Created sample of size: {X_sample.shape}")
 
-    logger.info("Saving sample...")
-    save_sample(X_sample, Y_sample, sample_config['output_dir'])
+    # Save sample
+    save_sample(X_sample, Y_sample, config['data']['sample']['output_dir'])
 
     return X_sample, Y_sample
-
