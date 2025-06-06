@@ -18,3 +18,4 @@ mlb.pkl
 models/
 outputs/
 vectorizer.pkl
+.github/
